@@ -12,7 +12,7 @@ This project is a Streamlit-based application that allows users to interact with
 
 ![Login Page](./images/webgage1.png)
 
-![Query Execution](./images/webgage2.png)
+![Query Execution](./images\webpage2.png)
 
 ## Requirements
 
