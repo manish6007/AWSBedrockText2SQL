@@ -106,7 +106,7 @@ def main(faiss_index):
 if __name__ == "__main__":
 
     # Parse the YAML content
-    yaml_file_path = 'D:\Git\Text2SQL\config.yaml'
+    yaml_file_path = '.\config.yaml'
     with open(yaml_file_path, 'r') as file:
         config = yaml.safe_load(file)
 
