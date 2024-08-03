@@ -47,6 +47,7 @@ def main(faiss_index):
 
     # Metadata Refresh
     st.sidebar.header("Metadata Refresh")
+    st.sidebar.image("athena.png", width=200, caption="Athena - Your Q&A Buddy")
     if st.sidebar.button("Refresh"):
         catalog_name = 'AwsDataCatalog'
         get_glue_column_metadata_to_csv(catalog_name, metadata_file, output_location)
@@ -131,7 +132,7 @@ if __name__ == "__main__":
         st.session_state.role = None
     # Streamlit app
     st.title("Talk to Athena")
-    st.image("athena.png", width=200, caption="Athena - Your Q&A Buddy")
+    st.image(".\images\icon.png", width=200, caption="Athena - Your Q&A Buddy")
     if not st.session_state.logged_in:
         # User inputs for login
         username = st.text_input("Username")
@@ -143,11 +144,12 @@ if __name__ == "__main__":
             if user:
                 st.session_state.logged_in = True
                 st.session_state.role = user['role']
+                st.session_state.username = user['username']
                 #st.success(f"Logged in as {user['role']}")
             else:
                 st.error("Invalid username or password")
     else:
-        st.success(f"Welcome {st.session_state.role[0].upper()}{st.session_state.role[1:]}! You can access the {st.session_state.role} dashboard. ")
+        st.success(f"Welcome {st.session_state.username[0].upper()}{st.session_state.username[1:]}! You can access the {st.session_state.role} dashboard. ")
         faiss_index = refresh_vector_store_local(faiss_local_paths, pkl_local_paths, bucket_name, folder_path)
         main(faiss_index)
         # Logout button
