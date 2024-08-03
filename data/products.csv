@@ -1,0 +1,6 @@
+ProductID,ProductName,Category,Price,StockQuantity
+101,Widget A,Category 1,25.00,100
+102,Widget B,Category 2,50.00,200
+103,Widget C,Category 1,75.00,150
+104,Widget D,Category 3,100.00,75
+105,Widget E,Category 2,125.00,50

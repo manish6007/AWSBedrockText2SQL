@@ -1,0 +1,28 @@
+Database Name,Table Name,Column Name,Type,Comment
+athena_db,customers,customerid,int,Example value: 1
+athena_db,customers,firstname,string,Example value: John
+athena_db,customers,lastname,string,Example value: Doe
+athena_db,customers,email,string,Example value: johndoe@example.com
+athena_db,customers,phonenumber,string,Example value: 123-456-7890
+athena_db,order_items,orderitemid,int,Example value: 1
+athena_db,order_items,orderid,int,Example value: 1001
+athena_db,order_items,productid,int,Example value: 101
+athena_db,order_items,quantity,int,Example value: 2
+athena_db,order_items,unitprice,double,Example value: 25.0
+athena_db,orders,orderid,int,from deserializer
+athena_db,orders,customerid,int,from deserializer
+athena_db,orders,orderdate,date,from deserializer
+athena_db,orders,orderamount,double,from deserializer
+athena_db,orders,orderstatus,string,from deserializer
+athena_db,procedures,procedure_id,string,Example value: 0001
+athena_db,procedures,procedure,string,Example value: General Consultation
+athena_db,procedures,category,string,Example value: consultation
+athena_db,procedures,price,int,Example value: 100
+athena_db,procedures,duration,int,Example value: 30
+athena_db,procedures,insurance,string,Example value: yes
+athena_db,procedures,customer_id,int,Example value: 1
+athena_db,products,productid,int,Example value: 101
+athena_db,products,productname,string,Example value: Widget A
+athena_db,products,category,string,Example value: Category 1
+athena_db,products,price,double,Example value: 25.0
+athena_db,products,stockquantity,int,Example value: 100

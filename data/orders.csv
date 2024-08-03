@@ -1,0 +1,6 @@
+OrderID,CustomerID,OrderDate,OrderAmount,OrderStatus
+1001,1,2023-01-15,150.50,Shipped
+1002,2,2023-02-20,250.00,Processing
+1003,1,2023-03-10,300.75,Delivered
+1004,3,2023-04-05,75.25,Cancelled
+1005,4,2023-05-25,500.00,Shipped

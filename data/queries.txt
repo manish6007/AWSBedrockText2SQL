@@ -1,0 +1,6 @@
+tell me about all the customers
+tell me about all the customers who placed orders?
+tell me about all the unique customers who placed orders?
+tell me about all the attributes of customers who placed orders and are there in order_item table. please provide order details as well?
+tell me the product name, category, price and StockQuantity of products for which the orders were placed along with customer name who placed those orders? concate first name and last name to form customer name?
+tell me about the product which generated maximum revenue?
