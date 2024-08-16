@@ -20,10 +20,14 @@ from langchain_community.chat_models import BedrockChat
 import pandas as pd
 import hashlib
 import streamlit.components.v1 as components
+import base64
 
 
 # Crete bedrock client
 bedrock_client = boto3.client(service_name='bedrock-runtime', region_name='us-east-1')
+
+#S3 client
+s3_client = boto3.client('s3')
 
 # Create bedrock embedding
 bedrock_embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v1", client=bedrock_client)
@@ -335,7 +339,7 @@ def load_index(bucket_name, folder_path):
                 shutil.move(file_path, backup_file_path)
                 print(f"Moved file: {file_path} to {backup_file_path}")
             
-    response = s3_client.list_objects_v2(Bucket=bucket_name)
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix='vectorstore')
     faiss_files = []
     pkl_files = []
 
@@ -378,4 +382,68 @@ def verify_login(users, username, password):
     if username in users and hash_password(password) == hash_password(users[username]["password"]):
         return users[username]
     return None
+
+# Function to load and encode the image
+def get_image_as_base64(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode()
+
+# Function to get response from di=ocument store
+def get_response_from_doc(llm, vectorstore, question):
+    ## create prompt / template
+    prompt_template = """
+    Human: Please use the given context to provide concise answer to the question
+    If you don't know the answer, just say that you don't know, don't try to make up an answer.
+    <context>
+    {context}
+    </context>
+    Question: {question}
+    Assistant:"""
+
+    PROMPT = PromptTemplate(
+        template=prompt_template, input_variables=["context", "question"]
+    )
+
+    qa = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=vectorstore.as_retriever(
+            search_type="similarity", search_kwargs={"k": 5}
+        ),
+        return_source_documents=True,
+        chain_type_kwargs={"prompt": PROMPT}
+    )
+    answer = qa({"query": question})
+    return answer['result']
+
+## load index
+def load_docs_index(bucket_name, folder_path):
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix='docstore')
+    faiss_files = []
+    pkl_files = []
+
+    for obj in response.get('Contents', []):
+        key = obj['Key']
+        if key.endswith(".faiss"):
+            faiss_files.append(key)
+        elif key.endswith(".pkl"):
+            pkl_files.append(key)
+
+    if not faiss_files or not pkl_files:
+        raise FileNotFoundError("Required FAISS or PKL file not found in the bucket.")
+
+    faiss_local_paths = []
+    pkl_local_paths = []
+
+    for faiss_file in faiss_files:
+        faiss_local_path = os.path.join(folder_path, faiss_file.split('/')[-1])
+        s3_client.download_file(Bucket=bucket_name, Key=faiss_file, Filename=faiss_local_path)
+        faiss_local_paths.append(faiss_local_path)
+
+    for pkl_file in pkl_files:
+        pkl_local_path = os.path.join(folder_path, pkl_file.split('/')[-1])
+        s3_client.download_file(Bucket=bucket_name, Key=pkl_file, Filename=pkl_local_path)
+        pkl_local_paths.append(pkl_local_path)
+
+    return faiss_local_paths, pkl_local_paths
 

@@ -6,4 +6,6 @@ knowledge_layer_file: knowledge_layer.json
 metadata_file: D:\Git\Text2SQL\metadata\glue_column_metadata.csv
 faiss_local_paths: ['D:/Git/Text2SQL/vectorstore/prompt_embeddings.index.faiss']
 pkl_local_paths: ['D:/Git/Text2SQL/vectorstore/prompt_embeddings.index.pkl']
+faiss_doc_paths: ['D:/Git/Text2SQL/documents/document_store.faiss']
+pkl_doc_paths: ['D:/Git/Text2SQL/documents/document_store.pkl']
 json_file_path: D:/Git/Text2SQL/authentication/users.json
