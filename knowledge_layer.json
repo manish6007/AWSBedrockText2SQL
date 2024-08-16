@@ -1,36 +1,3 @@
 {
-    "tables": [
-        {
-            "name": "customers",
-            "join": {
-                "table": "orders",
-                "on": "customers.CustomerID = orders.CustomerID"
-            },
-            "filters": []
-        },
-        {
-            "name": "orders",
-            "join": {
-                "table": "order_items",
-                "on": "orders.OrderID = order_items.OrderID"
-            },
-            "filters": []
-        },
-        {
-            "name": "products",
-            "join": {
-                "table": "order_items",
-                "on": "products.ProductID = order_items.ProductID"
-            },
-            "filters": []
-        },
-        {
-            "name": "order_items",
-            "join": {
-                "table": "orders",
-                "on": "order_items.OrderID = orders.OrderID"
-            },
-            "filters": []
-        }
-    ]
+    "revenue": "order_items.unit_price * order_items.quantity"
 }

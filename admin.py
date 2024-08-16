@@ -2,11 +2,15 @@ import boto3
 import streamlit as st
 import os
 import uuid
+import yaml
 
+yaml_file_path = '.\config.yaml'
+with open(yaml_file_path, 'r') as file:
+    config = yaml.safe_load(file)
 ## s3_client
 s3_client = boto3.client("s3")
 #BUCKET_NAME = os.getenv("BUCKET_NAME")
-bucket_name = 'athena-destination-store-cg'
+bucket_name = config['bucket_name']
 
 ## Bedrock
 from langchain_community.embeddings import BedrockEmbeddings

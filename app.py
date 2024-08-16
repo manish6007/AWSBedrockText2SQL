@@ -14,7 +14,7 @@ from langchain_community.embeddings import BedrockEmbeddings
 from langchain_community.llms import Bedrock
 import numpy as np
 from utility import *
-from docs_utility import *
+from admin import *
 import json
 
 def refresh_vector_store_local(faiss_local_paths, pkl_local_paths, bucket_name, folder_path):
@@ -63,7 +63,7 @@ def main(faiss_index, faiss_doc_index):
         st.sidebar.write("Metadata Refreshed")
     st.sidebar.image("images/docstore.png", width=200)
     if st.sidebar.button("Refresh Documents"):
-        faiss_doc_paths, pkl_doc_paths = load_docs_index(bucket_name, 'D:/Text2SQL/documents/')
+        faiss_doc_paths, pkl_doc_paths = load_docs_index(bucket_name, doc_store_path)
         st.sidebar.write("Document store Refreshed Successfully")
 
     # Metadata Refresh
@@ -106,7 +106,7 @@ def main(faiss_index, faiss_doc_index):
             if "drop" not in response.lower() and "delete" not in response.lower() and "truncate" not in response.lower() and "create" not in response.lower():
                 query, status = get_valid_query(llm, faiss_index, response, "default", output_location)
                 if status == False:
-                    st.write(query)
+                    #st.write(query)
                     st.write("Could not generate a valid Athena query. Here's the information from the document vector store:")
                     response = get_response_from_doc(llm, faiss_doc_index, original_question)
                     st.write(response)
@@ -144,6 +144,7 @@ if __name__ == "__main__":
     pkl_local_paths = config['pkl_local_paths']
     faiss_doc_paths = config['faiss_doc_paths']
     pkl_doc_paths = config['pkl_doc_paths']
+    doc_store_path = config['doc_store_path']
     knowledge_layer = load_knowledge_layer(knowledge_layer_file)
     knowledge_layer = json.dumps(knowledge_layer)
 
@@ -165,17 +166,17 @@ if __name__ == "__main__":
         # Login button
         if st.button("Login"):
             user = verify_login(users, username, password)
+            st.session_state.messages = []
             if user:
                 st.session_state.logged_in = True
                 st.session_state.role = user['role']
                 st.session_state.username = user['username']
-                #st.success(f"Logged in as {user['role']}")
             else:
                 st.error("Invalid username or password")
     else:
         st.success(f"Welcome {st.session_state.username[0].upper()}{st.session_state.username[1:]}! You can access the {st.session_state.role} dashboard. ")
         faiss_index = refresh_vector_store_local(faiss_local_paths, pkl_local_paths, bucket_name, folder_path)
-        faiss_doc_index = refresh_vector_store_local(faiss_doc_paths, pkl_doc_paths, bucket_name, 'D:/Text2SQL/documents')
+        faiss_doc_index = refresh_vector_store_local(faiss_doc_paths, pkl_doc_paths, bucket_name, doc_store_path)
         main(faiss_index, faiss_doc_index)
         # Logout button
         if st.sidebar.button("Logout"):
