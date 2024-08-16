@@ -2,16 +2,13 @@ import streamlit as st
 import yaml
 import boto3
 import pandas as pd
-from langchain.embeddings import BedrockEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders.csv_loader import CSVLoader
-from langchain.vectorstores import FAISS
+from langchain_community.document_loaders import CSVLoader
 from langchain.indexes.vectorstore import VectorStoreIndexWrapper
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import BedrockEmbeddings
-from langchain_community.llms import Bedrock
 import numpy as np
 from utility import *
 from admin import *

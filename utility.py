@@ -7,16 +7,13 @@ import re
 import time
 import shutil
 from datetime import datetime
-from langchain.embeddings import BedrockEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import CSVLoader
 from langchain_community.vectorstores import FAISS
-from langchain.indexes.vectorstore import VectorStoreIndexWrapper
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain_community.embeddings import BedrockEmbeddings
-from langchain_aws import BedrockLLM
-from langchain_community.chat_models import BedrockChat
+from langchain_aws import ChatBedrock
 import pandas as pd
 import hashlib
 import streamlit.components.v1 as components
@@ -58,7 +55,7 @@ def query_athena_to_get_first_row(database_name, table_name, output_location):
         else:
             return None
     else:
-        print(f"Query failed with state: {state}")
+        #print(f"Query failed with state: {state}")
         return None
 
 
@@ -109,7 +106,7 @@ def get_glue_column_metadata_to_csv(catalog_name, output_file, athena_output_loc
             writer = csv.writer(csv_file)
             writer.writerows(columns_metadata)
         
-        print(f"Column metadata saved to {output_file} successfully.")
+        #print(f"Column metadata saved to {output_file} successfully.")
         
     except glue_client.exceptions.EntityNotFoundException:
         print(f"Catalog '{catalog_name}' not found in Glue.")
@@ -177,11 +174,6 @@ def get_response(llm, vectorstore, question):
     Assistant:
     """
 
-
-
-
-    print(prompt_template)
-
     PROMPT = PromptTemplate(
         template=prompt_template, input_variables=["context","question"]
     )
@@ -201,7 +193,7 @@ def get_response(llm, vectorstore, question):
 
 
 def get_llm():
-    llm = BedrockChat(model_id="anthropic.claude-3-sonnet-20240229-v1:0", client=bedrock_client,
+    llm = ChatBedrock(model_id="anthropic.claude-3-sonnet-20240229-v1:0", client=bedrock_client,
                   model_kwargs={'max_tokens': 512, 'temperature': 0.5})
     return llm
 

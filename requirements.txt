@@ -2,4 +2,6 @@ streamlit
 boto3
 pandas
 langchain
+langchain_aws
 langchain_community
+pypdf

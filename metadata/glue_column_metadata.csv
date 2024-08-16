@@ -9,6 +9,11 @@ athena_db,order_items,orderid,int,Example value: 1001
 athena_db,order_items,productid,int,Example value: 101
 athena_db,order_items,quantity,int,Example value: 2
 athena_db,order_items,unitprice,double,Example value: 25.0
+athena_db,orders,orderid,int,from deserializer
+athena_db,orders,customerid,int,from deserializer
+athena_db,orders,orderdate,date,from deserializer
+athena_db,orders,orderamount,double,from deserializer
+athena_db,orders,orderstatus,string,from deserializer
 athena_db,procedures,procedure_id,string,Example value: 0001
 athena_db,procedures,procedure,string,Example value: General Consultation
 athena_db,procedures,category,string,Example value: consultation
