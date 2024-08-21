@@ -2,48 +2,61 @@ import streamlit as st
 import yaml
 import boto3
 import pandas as pd
+from langchain.embeddings import BedrockEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import CSVLoader
+from langchain.document_loaders.csv_loader import CSVLoader
+from langchain.vectorstores import FAISS
 from langchain.indexes.vectorstore import VectorStoreIndexWrapper
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import BedrockEmbeddings
+from langchain_community.llms import Bedrock
 import numpy as np
 from utility import *
 from admin import *
 import json
+import os
+
+# Define the file path to store conversation history
+CONVERSATION_HISTORY_FILE = "conversation_history.json"
+
+def load_conversation_history():
+    """Load conversation history from a JSON file."""
+    if os.path.exists(CONVERSATION_HISTORY_FILE):
+        with open(CONVERSATION_HISTORY_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+def save_conversation_history():
+    """Save conversation history to a JSON file."""
+    with open(CONVERSATION_HISTORY_FILE, 'a') as f:
+        json.dump(st.session_state.messages, f)
 
 def refresh_vector_store_local(faiss_local_paths, pkl_local_paths, bucket_name, folder_path):
-        try:
+    try:
+        dir_list = os.listdir(folder_path)
+        faiss_indexes = []
+        for faiss_local_path in faiss_local_paths:
+            faiss_index = FAISS.load_local(
+                index_name=faiss_local_path.split('/')[-1].replace('.faiss', ''),
+                folder_path=folder_path,
+                embeddings=bedrock_embeddings,
+                allow_dangerous_deserialization=True
+            )
+            faiss_indexes.append(faiss_index)
+        faiss_index = None
+        for index in faiss_indexes:
+            if faiss_index is None:
+                faiss_index = index
+            else:
+                faiss_index.merge_from(index)    
 
-            dir_list = os.listdir(folder_path)
-            #st.write(dir_list)
-            ## create index
-            faiss_indexes = []
-            for faiss_local_path in faiss_local_paths:
-                faiss_index = FAISS.load_local(
-                    index_name=faiss_local_path.split('/')[-1].replace('.faiss', ''),
-                    folder_path=folder_path,
-                    embeddings=bedrock_embeddings,
-                    allow_dangerous_deserialization=True
-                )
-                faiss_indexes.append(faiss_index)
-            faiss_index = None
-            for index in faiss_indexes:
-                if faiss_index is None:
-                    faiss_index = index
-                else:
-                    faiss_index.merge_from(index)    
-
-            #st.success("Metadata extraction completed and saved locally.")
-            return faiss_index
-        except Exception as e:
-            st.error(f"An error occurred during metadata extraction: {e}")
+        return faiss_index
+    except Exception as e:
+        st.error(f"An error occurred during metadata extraction: {e}")
 
 def main(faiss_index, faiss_doc_index):
-
-    # Metadata Refresh
     st.sidebar.header("Metadata Refresh")
     st.sidebar.image("athena.png", width=200, caption="Athena - Your Q&A Buddy")
     if st.sidebar.button("Refresh"):
@@ -63,12 +76,9 @@ def main(faiss_index, faiss_doc_index):
         faiss_doc_paths, pkl_doc_paths = load_docs_index(bucket_name, doc_store_path)
         st.sidebar.write("Document store Refreshed Successfully")
 
-    # Metadata Refresh
     if st.session_state.role == 'admin':
-        # Encode the image
         image_base64 = get_image_as_base64('images/docstore.png')
         link_url = "http://localhost:8052/"
-        # HTML code to embed the link in the image
         html = f"""
         <a href="{link_url}" target="_blank">
             <img src="data:image/jpeg;base64,{image_base64}" alt="Image" style="width:10%;">
@@ -77,60 +87,54 @@ def main(faiss_index, faiss_doc_index):
         st.write("To upload the documents please click below icon..")
         st.markdown(html, unsafe_allow_html=True)
 
-    # Create llm
     llm = get_llm()
     
     # Initialize session state for history
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = load_conversation_history()
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
     if original_question := st.chat_input("Ask me the details you want from athena.."):
-    # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": original_question})
-        # Display user message in chat message container
         with st.chat_message("user"):
             st.markdown(original_question)
 
         with st.chat_message("assistant"):
-            question = f"{original_question} Refer {knowledge_layer} for additional information and use it if required and refer {st.session_state.messages} to check if the query already asked earlier and use the same to refine"
-            #question = f"{original_question} refer {st.session_state.messages} to check if the query already asked earlier and use the same to refine"            
-            response = get_response(llm, faiss_index, question)
+            question = f"{original_question}. Use the {knowledge_layer} only if the query involves a join, filter or calculation like SUM, AVG. Otherwise, refer to {st.session_state.messages} to see if a similar query has been asked earlier and refine the response accordingly."
+            response = get_response(llm, faiss_index, original_question)
             print(response)
             if "drop" not in response.lower() and "delete" not in response.lower() and "truncate" not in response.lower() and "create" not in response.lower():
                 query, status = get_valid_query(llm, faiss_index, response, "default", output_location)
                 if status == False:
-                    #st.write(query)
                     st.write("Could not generate a valid Athena query. Here's the information from the document vector store:")
                     response = get_response_from_doc(llm, faiss_doc_index, original_question)
                     st.write(response)
                 else:
                     st.write(query)
                     df = run_athena_query(query, "default", output_location)
-                    st.session_state.messages.append({"role": "Assistent", "content": query})
+                    st.session_state.messages.append({"role": "assistant", "content": query})
                     st.write(df)
                     response = get_response_from_doc(llm, faiss_doc_index, original_question)
                     st.write(response)
             else:
                 if st.session_state.role == 'admin':
                     run_athena_query(response, "default", output_location)
-                    st.session_state.messages.append({"role": "Assistent", "content": response})
+                    st.session_state.messages.append({"role": "assistant", "content": response})
                     st.success("Statement Executed Successfully.")
                 else:
                     st.write("Sorry, You are not authorized to perform this action.")
-            
+
+        # Save conversation history after each interaction
+        save_conversation_history()
 
 if __name__ == "__main__":
-
-    # Parse the YAML content
     yaml_file_path = '.\config.yaml'
     with open(yaml_file_path, 'r') as file:
         config = yaml.safe_load(file)
 
-    # Fetch the parameters into respective variables
     metadata_file = config['metadata_file']
     json_file_path = config['json_file_path']
     output_location = config['output_location']
@@ -148,19 +152,16 @@ if __name__ == "__main__":
     with open(json_file_path, 'r') as file:
         users = json.load(file)
 
-    # Initialize session state
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.role = None
-    # Streamlit app
+
     st.title("Talk to Athena")
     st.image(".\images\icon.png", width=200, caption="Athena - Your Q&A Buddy")
     if not st.session_state.logged_in:
-        # User inputs for login
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
 
-        # Login button
         if st.button("Login"):
             user = verify_login(users, username, password)
             st.session_state.messages = []
@@ -175,10 +176,7 @@ if __name__ == "__main__":
         faiss_index = refresh_vector_store_local(faiss_local_paths, pkl_local_paths, bucket_name, folder_path)
         faiss_doc_index = refresh_vector_store_local(faiss_doc_paths, pkl_doc_paths, bucket_name, doc_store_path)
         main(faiss_index, faiss_doc_index)
-        # Logout button
         if st.sidebar.button("Logout"):
             st.session_state.logged_in = False
             st.session_state.role = None
             st.experimental_rerun()
-
-    

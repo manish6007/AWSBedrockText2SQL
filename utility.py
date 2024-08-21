@@ -7,13 +7,16 @@ import re
 import time
 import shutil
 from datetime import datetime
+from langchain.embeddings import BedrockEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import CSVLoader
 from langchain_community.vectorstores import FAISS
+from langchain.indexes.vectorstore import VectorStoreIndexWrapper
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain_community.embeddings import BedrockEmbeddings
-from langchain_aws import ChatBedrock
+from langchain_aws import BedrockLLM
+from langchain_community.chat_models import BedrockChat
 import pandas as pd
 import hashlib
 import streamlit.components.v1 as components
@@ -55,7 +58,7 @@ def query_athena_to_get_first_row(database_name, table_name, output_location):
         else:
             return None
     else:
-        #print(f"Query failed with state: {state}")
+        print(f"Query failed with state: {state}")
         return None
 
 
@@ -69,7 +72,7 @@ def get_glue_column_metadata_to_csv(catalog_name, output_file, athena_output_loc
         databases = response['DatabaseList']
         
         # Prepare columns metadata list for CSV
-        columns_metadata = [["Database Name", "Table Name", "Column Name", "Type", "Comment"]]
+        columns_metadata = [["database_name", "table_name", "column_name", "type", "comment"]]
         
         for database in databases:
             database_name = database['Name']
@@ -90,7 +93,7 @@ def get_glue_column_metadata_to_csv(catalog_name, output_file, athena_output_loc
                     # Update comment with the first row value if available
                     comment = column.get('Comment', 'N/A')
                     if first_row_values and i < len(first_row_values):
-                        comment = f"Example value: {first_row_values[i]}"
+                        comment = f"{first_row_values[i]}"
                     
                     column_metadata = [
                         database_name,
@@ -106,7 +109,7 @@ def get_glue_column_metadata_to_csv(catalog_name, output_file, athena_output_loc
             writer = csv.writer(csv_file)
             writer.writerows(columns_metadata)
         
-        #print(f"Column metadata saved to {output_file} successfully.")
+        print(f"Column metadata saved to {output_file} successfully.")
         
     except glue_client.exceptions.EntityNotFoundException:
         print(f"Catalog '{catalog_name}' not found in Glue.")
@@ -118,82 +121,85 @@ def split_text(pages, chunk_size, chunk_overlap):
     docs = text_splitter.split_documents(pages)
     return docs
 
-def extract_tables_and_columns(question):
-    # This regex assumes tables and columns are identified by capitalizing and separating words
-    pattern = re.compile(r"([A-Z][a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)")
-    return pattern.findall(question)
+def extract_tables_and_columns(question, faiss_index):
+    retriever = faiss_index.as_retriever(search_type="similarity", search_kwargs={"k": 20})
+    response =  retriever.invoke(question)
+    data_list = [response[n].page_content for n in range(len(response))]
+    final_dict = {}
+    table_names = []
+    column_names = []
+    for item in data_list:
+        # Split the string into lines and create a temporary dictionary
+        lines = item.split('\n')
+        temp_dict = {line.split(': ')[0]: line.split(': ')[1] for line in lines}
 
-def find_closest_matches(retriever, items):
-    validated_items = []
-    for item in items:
-        result = retriever.retrieve(item, search_type="similarity", search_kwargs={"k": 1})
-        if result:
-            validated_items.append(result[0]['text'])
-        else:
-            validated_items.append(item)  # fallback to original if no match is found
-    return validated_items
+        # Extract relevant information
+        database_name = temp_dict['database_name']
+        table_name = temp_dict['table_name']
+        column_name = temp_dict['column_name']
+        column_type = temp_dict['type']
+        example_value = temp_dict['comment']
+        if table_name not in table_names:
+            table_names.append(table_name)
+        column_names.append(column_name)
 
-def validate_items_from_vectorstore(vectorstore, items):
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 1})
-    return find_closest_matches(retriever, items)
+        # Initialize database and table if not already present in final_dict
+        if database_name not in final_dict:
+            final_dict[database_name] = {}
 
-def create_context(validated_tables_columns):
+        if table_name not in final_dict[database_name]:
+            final_dict[database_name][table_name] = {
+                'Column_names': []
+            }
+
+        # Append the column details to the Column_names list
+        final_dict[database_name][table_name]['Column_names'].append({
+            'column_name': column_name,
+            'type': column_type,
+            'example_value': example_value
+        })
+    return database_name, table_names, column_names, final_dict
+
+
+def create_context(table_names, column_names, additional_info):
     context = ""
-    for table, columns in validated_tables_columns.items():
-        context += f"Table: {table}\n"
-        for column in columns:
-            context += f" - Column: {column}\n"
+    context += f"Table: {table_names}\n"
+    context += f" - Column: {column_names}\n"
+    context += f" - DB, Table, Column mapping: {additional_info}\n"
     return context
 
 def get_response(llm, vectorstore, question):
-    tables_columns = extract_tables_and_columns(question)
-    table_names = list(set([tc[0] for tc in tables_columns]))
-    column_names = list(set([tc[1] for tc in tables_columns]))
+    database_name,table_names, column_names, dict = extract_tables_and_columns(question, vectorstore)
 
-    validated_tables = validate_items_from_vectorstore(vectorstore, table_names)
-    validated_columns = validate_items_from_vectorstore(vectorstore, column_names)
+    context = create_context(table_names, column_names, dict)
+    print(context)
+    knowledge_layer = load_knowledge_layer("knowledge_layer.json")
+    knowledge_layer = json.dumps(knowledge_layer)
 
-    validated_tables_columns = {table: [] for table in validated_tables}
+    details = "It is important that the SQL query complies with Athena syntax. \
+        Query should be enclosed within ```sql and ``` only. \
+    During join if column name are same please use alias ex llm.customer_id \
+    use the joins only and only if you think its required \
+    in select statement. table name should follow the format database_name.table_name ex athena_db.customers \
+    It is also important to respect the type of columns: \
+    if a column is string, the value should be enclosed in quotes. \
+    If you are writing CTEs then include all the required columns. \
+    For date columns comparing to string , please cast the string input. \
+    . \
+    "
 
-    for table, column in tables_columns:
-        if table in validated_tables and column in validated_columns:
-            validated_tables_columns[table].append(column)
+    final_question = "\n\nHuman:"+details + context + question+ "refer below for joining condition or filter if required \n\n"+knowledge_layer+ "n\nAssistant:"
+    print(final_question)
+    answer = llm.predict(final_question)
+    query_str = answer.split("```")[1] if "```" in answer else answer
+    query_str = " ".join(query_str.split("\n")).strip()
+    sql_query = query_str[3:] if query_str.startswith("sql") else query_str
 
-    context = create_context(validated_tables_columns)
-
-    prompt_template = """Human: You are a SQL developer creating queries for Amazon Athena.
-    Objective: Generate SQL queries to return data based on the user request and provided schema only. don't make up column names and  Use only functions relevant to Athena.
-    - If multiple columns have the same name, include the column only once.
-    - Append the table name with the database name in the format: database_name.table_name.
-    - Use the CAST function for date columns, assuming the date is in YYYY-MM-DD format.
-    Only return the SQL query without any additional information. Do not include any quotes.
-    <context>
-    {context}
-    </context>
-    Question: {question}
-    Assistant:
-    """
-
-    PROMPT = PromptTemplate(
-        template=prompt_template, input_variables=["context","question"]
-    )
-
-    qa = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=vectorstore.as_retriever(
-            search_type="similarity", search_kwargs={"k": 5}
-        ),
-        return_source_documents=True,
-        chain_type_kwargs={"prompt": PROMPT}
-    )
-
-    answer = qa({"query": question})
-    return answer['result']
+    return sql_query
 
 
 def get_llm():
-    llm = ChatBedrock(model_id="anthropic.claude-3-sonnet-20240229-v1:0", client=bedrock_client,
+    llm = BedrockChat(model_id="anthropic.claude-3-sonnet-20240229-v1:0", client=bedrock_client,
                   model_kwargs={'max_tokens': 512, 'temperature': 0.5})
     return llm
 
