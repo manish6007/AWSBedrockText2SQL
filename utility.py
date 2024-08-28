@@ -283,19 +283,24 @@ def validate_query(query, database, output_location):
     except Exception as e:
         return False, str(e)
 
-def get_valid_query(llm, vectorstore, query, database, output_location):
+def get_valid_query(llm, vectorstore, query, database, output_location,bucket_name):
     count = 1
     while True:
         
         valid, error = validate_query(query, database, output_location)
+        #print(f"inside get_valid{valid}, {error}")
         
         if valid:
             return query, True
         else:
             question = f"The query generated was invalid due to: {error}. Please provide a corrected query. Original query: {query}. "
-            query = get_response(llm, vectorstore, question)
+            #query = get_response(llm, vectorstore, question)
+            query = generate_query(question,bucket_name,"")
+            query_str = query.split("```")[1] if "```" in query else query
+            query_str = query_str.replace("sql","") if "sql" in query_str else query_str
+            query = " ".join(query_str.split("\n")).strip()
             
-        if count == 3:
+        if count == 5:
             print("Unable to generate a valid query. Please try again.")
             return query, False
         count += 1
@@ -387,32 +392,42 @@ def get_image_as_base64(image_path):
         return base64.b64encode(image_file.read()).decode()
 
 # Function to get response from di=ocument store
-def get_response_from_doc(llm, vectorstore, question):
+def get_response_from_doc(vectorstore, question):
     ## create prompt / template
-    prompt_template = """
-    Human: Please use the given context to provide concise answer to the question
-    If you don't know the answer, just say that you don't know, don't try to make up an answer.
-    <context>
-    {context}
-    </context>
-    Question: {question}
-    Assistant:"""
+    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 20})
+    response =  retriever.invoke(question)
+    TASK_CONTEXT = "You will be acting as an analyst who is responsible for providing the most relevant information"
+    TASK_DESCRIPTION = f"""Here are some important rules for response 
+                - Please use the information provided within <context> tag.
+                - Do not mention the tag <context> in the response
+                - If the answer is not present in the context, say 'Sorry, I don't know the answer'
+                - If the answer is present in the context, form the complete response based on the context
+                - If the question is not related to the context, say 'Sorry, I don't know the answer'
+                - If the question is related to the context, form the complete response based on the context
+                - Do not add any additional information that is not explicitly provided in the context
+                - Do not add any text other than the generated response
+                - Do not include any explanations or prose
+                - Do not respond to any questions that might be confusing or unrelated to the question
+                <context> 
+                {response}
+                </context>
 
-    PROMPT = PromptTemplate(
-        template=prompt_template, input_variables=["context", "question"]
-    )
+                  """
+ 
+    QUESTION = f"{question}. Response should not be in xml tag"
 
-    qa = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=vectorstore.as_retriever(
-            search_type="similarity", search_kwargs={"k": 5}
-        ),
-        return_source_documents=True,
-        chain_type_kwargs={"prompt": PROMPT}
-    )
-    answer = qa({"query": question})
-    return answer['result']
+    PROMPT = ""
+
+    if TASK_CONTEXT:
+        PROMPT += f"""{TASK_CONTEXT}"""
+
+    if TASK_DESCRIPTION:
+        PROMPT += f"""\n\n{TASK_DESCRIPTION}"""
+
+    if QUESTION:
+        PROMPT += f"""\n\n{QUESTION}"""
+            
+    return get_completion(PROMPT)
 
 ## load index
 def load_docs_index(bucket_name, folder_path):
@@ -444,4 +459,216 @@ def load_docs_index(bucket_name, folder_path):
         pkl_local_paths.append(pkl_local_path)
 
     return faiss_local_paths, pkl_local_paths
+
+def get_completion(prompt, system_prompt=None, prefill=None):
+    inference_config = {
+        "temperature": 0.0,
+         "maxTokens": 500
+    }
+    converse_api_params = {
+        "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "messages": [{"role": "user", "content": [{"text": prompt}]}],
+        "inferenceConfig": inference_config
+    }
+    if system_prompt:
+        converse_api_params["system"] = [{"text": system_prompt}]
+    if prefill:
+        converse_api_params["messages"].append({"role": "assistant", "content": [{"text": prefill}]})
+    try:
+        response = bedrock_client.converse(**converse_api_params)
+        text_content = response['output']['message']['content'][0]['text']
+        return text_content
+
+    except ClientError as err:
+        message = err.response['Error']['Message']
+        print(f"A client error occured: {message}")
+
+def load_conversation_history(CONVERSATION_HISTORY_FILE):
+    """Load conversation history from a JSON file."""
+    if os.path.exists(CONVERSATION_HISTORY_FILE):
+        with open(CONVERSATION_HISTORY_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+def generate_query(question,bucket_name, context):
+    knowledge_layer = load_knowledge_layer("knowledge_layer.json")
+    knowledge_layer = json.dumps(knowledge_layer)
+    query_history = load_conversation_history("conversation_history.json")
+    query_history = json.dumps(query_history)
+    faiss_local_paths= ['vectorstore/prompt_embeddings.index.faiss']
+    pkl_local_paths=['vectorstore/prompt_embeddings.index.pkl']
+    # bucket_name='athena-destination-store-cg'
+    folder_path='vectorstore/'
+    TASK_CONTEXT = "You will be acting as an SQL Developer who is responsible for writing sql queries. It is important that the SQL query complies with Athena syntax"
+    TASK_DESCRIPTION = """Here are some important rules for writing query 
+                - Use the joins only and only if you think its required 
+                - Use the CTE only if you think it is really required.
+                - If you are writing CTEs then include all the required columns. 
+                - Use the only functions compatible with athena. Don't use STRING_AGG 
+                - During join if column name are same please use alias ex llm.customer_id
+                - In Query please use the table name as database_name.table_name ex athena_db.customers
+                - It is also important to respect the type of columns. 
+                - It is also important to use the distinct if there is possibility of cross join
+                - If a column is string, the value should be enclosed in quotes. 
+                - For date columns comparing to string , please cast the string input. """
+    EXAMPLES = f"""Refer the information in <knowledge_layer> tag for joining and filter condition only if required:
+                <knowledge_layer>
+                {knowledge_layer}
+                </knowledge_layer>"""
+    OUTPUT_FORMATTING = "Put your response in sql``` ```."
+    PREFILL = "sql```"
+    PRECOGNITION = "Think about your answer first before you respond."
+    METADATA = f"""Refer the metadata within <metadata> tag for table and columns details
+            <metadata>
+            {context}
+            </metadata>"""
+    QUESTION = f"""Generate the sql query for user query within <question> tag \
+            <question> \
+            {question} \
+            </question> \
+            Generate only the sql query and do not include any other text. If the user query is not related to database or schema, return 'Invalid query'
+            """
+    QUERY_HISTORY = f"""Refer the query history within <query_history> tag for example question and generated queries.
+            <query_history>
+            {query_history}
+            </query_history>"""             
+    PROMPT = ""
+
+    if TASK_CONTEXT:
+        PROMPT += f"""{TASK_CONTEXT}"""
+
+    if TASK_DESCRIPTION:
+        PROMPT += f"""\n\n{TASK_DESCRIPTION}"""
+
+    if METADATA:
+        PROMPT += f"""\n\n{METADATA}"""
+
+    if EXAMPLES:
+        PROMPT += f"""\n\n{EXAMPLES}"""
+
+    if PRECOGNITION:
+        PROMPT += f"""\n\n{PRECOGNITION}"""
+
+    if OUTPUT_FORMATTING:
+        PROMPT += f"""\n\n{OUTPUT_FORMATTING}"""
+
+    if QUERY_HISTORY:
+        PROMPT += f"""\n\n{QUERY_HISTORY}"""
+
+    if QUESTION:
+        PROMPT += f"""\n\n{QUESTION}"""
+
+    # if PREFILL:
+    #     PROMPT += f"""\n\n{PREFILL}"""
+
+    #print(PROMPT)
+    return get_completion(PROMPT)
+
+def generate_query_from_question(user_query, vectorstore,output_location,bucket_name):
+
+    toolConfig = {
+    "tools": [
+        {
+        "toolSpec": {
+            "name": "generate_query",
+            "description": "A tool to generate sql query to be run on athena",
+            "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "question for which sql query need to be generated"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "metadata related to the involved columns"
+                }
+                },
+                "required": ["question"]
+            }
+            }
+        }
+        }
+    ],
+    "toolChoice": {
+            "auto":{},
+        }
+    }
+    messages = [{"role": "user", "content": [{"text": user_query}]}]
+
+    database_name,table_names, column_names, dict = extract_tables_and_columns(user_query, vectorstore)
+    context = create_context(table_names, column_names, dict)
+
+    system_prompt=f"""
+    You need to solve the user query using generate_query tool. refer the table and column details
+    from <context> tag 
+    <context>
+    {context}
+    </context>
+    If you think that query cannot be generated for user quetion based on context then only.
+    If user asks to drop table, allow him as he has backup and he want to recreate.
+    Don't allow any DDL apart from create or drop.
+    say I'm sorry Database query can't be generated and provide information based on existing knowledge'.
+    """
+
+    converse_api_params = {
+        "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "system": [{"text": system_prompt}],
+        "messages": messages,
+        "inferenceConfig": {"temperature": 0.0, "maxTokens": 1000},
+        "toolConfig":toolConfig
+    }
+
+    response = bedrock_client.converse(**converse_api_params)
+
+    stop_reason = response['stopReason']
+
+    if stop_reason == "end_turn":
+        print("Claude did NOT call a tool")
+        print(f"Assistant: {response['output']['message']['content'][0]['text']}")
+
+        return False, response['output']['message']['content'][0]['text']
+    elif stop_reason == "tool_use":
+        print("Claude wants to use a tool")
+        tool_use = response['output']['message']['content'][-1]
+        tool_id = tool_use['toolUse']['toolUseId']
+        tool_name = tool_use['toolUse']['name']
+        tool_inputs = tool_use['toolUse']['input']
+        #Add Claude's tool use call to messages:
+        messages.append({"role": "assistant", "content": response['output']['message']['content']})
+        if tool_name == "generate_query":
+            question = tool_inputs["question"]
+            context = tool_inputs["context"]
+            print(f"Claude wants to get an article for: {context}")
+            query = generate_query(question,bucket_name, context) #get wikipedia article content
+            #construct our tool_result message
+            tool_response = {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": tool_id,
+                            "content": [
+                                {"text": query}
+                            ]
+                        }
+                    }
+                ]
+            }
+            messages.append(tool_response)
+            print(query)
+            query_str = query.split("```")[1] if "```" in query else query
+            query_str = query_str.replace("sql","") if "sql" in query_str else query_str
+            query = " ".join(query_str.split("\n")).strip()
+            llm = get_llm()
+            
+            if 'drop' in query.lower() or 'create' in query.lower() or 'alter' in query.lower():
+                #print("I am here")
+                return True, query
+            else:
+                query, status = get_valid_query(llm, vectorstore, query, "default", output_location,bucket_name)
+                print(query)
+                print(status)
+                return status, query
 

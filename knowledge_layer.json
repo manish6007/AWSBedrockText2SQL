@@ -31,6 +31,13 @@
                 "on": "order_items.OrderID = orders.OrderID"
             },
             "filters": []
+        },
+        {
+            "revenue": "order_items.unit_price * order_items.quantity"
+        },
+        {
+            "customername": "customers.firstname + ' ' + customers.lastname"
         }
+
     ]
 }

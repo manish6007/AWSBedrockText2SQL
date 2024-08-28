@@ -1,7 +1,9 @@
-streamlit
-boto3
-pandas
-langchain
-langchain_aws
-langchain_community
 pypdf
+boto3==1.35.5
+pandas
+streamlit
+langchain
+langchain_community
+langchain_aws
+faiss-cpu
+pyyaml

@@ -21,17 +21,29 @@ import os
 # Define the file path to store conversation history
 CONVERSATION_HISTORY_FILE = "conversation_history.json"
 
-def load_conversation_history():
-    """Load conversation history from a JSON file."""
-    if os.path.exists(CONVERSATION_HISTORY_FILE):
-        with open(CONVERSATION_HISTORY_FILE, 'r') as f:
-            return json.load(f)
-    return []
-
 def save_conversation_history():
     """Save conversation history to a JSON file."""
-    with open(CONVERSATION_HISTORY_FILE, 'a') as f:
-        json.dump(st.session_state.messages, f)
+    # Check if the conversation history file exists and has content
+    if os.path.exists(CONVERSATION_HISTORY_FILE):
+        try:
+            with open(CONVERSATION_HISTORY_FILE, 'r') as f:
+                data = json.load(f)
+                
+            # Ensure the file contains a list
+            if not isinstance(data, list):
+                raise ValueError("File content is not a list")
+        except (json.JSONDecodeError, ValueError):
+            # If the file is empty or not a valid list, start with an empty list
+            data = []
+    else:
+        data = []
+
+    # Append the new message to the list
+    data.append(st.session_state.messages)
+
+    # Write the updated list back to the file
+    with open(CONVERSATION_HISTORY_FILE, 'w') as f:
+        json.dump(data, f, indent=4)
 
 def refresh_vector_store_local(faiss_local_paths, pkl_local_paths, bucket_name, folder_path):
     try:
@@ -91,7 +103,7 @@ def main(faiss_index, faiss_doc_index):
     
     # Initialize session state for history
     if "messages" not in st.session_state:
-        st.session_state.messages = load_conversation_history()
+        st.session_state.messages = []
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
@@ -104,31 +116,27 @@ def main(faiss_index, faiss_doc_index):
 
         with st.chat_message("assistant"):
             question = f"{original_question}. Use the {knowledge_layer} only if the query involves a join, filter or calculation like SUM, AVG. Otherwise, refer to {st.session_state.messages} to see if a similar query has been asked earlier and refine the response accordingly."
-            response = get_response(llm, faiss_index, original_question)
-            print(response)
-            if "drop" not in response.lower() and "delete" not in response.lower() and "truncate" not in response.lower() and "create" not in response.lower():
-                query, status = get_valid_query(llm, faiss_index, response, "default", output_location)
-                if status == False:
-                    st.write("Could not generate a valid Athena query. Here's the information from the document vector store:")
-                    response = get_response_from_doc(llm, faiss_doc_index, original_question)
-                    st.write(response)
-                else:
+            status, query = generate_query_from_question(original_question, faiss_index, output_location, bucket_name)
+            if status:
+                if "drop" not in query.lower() and "delete" not in query.lower() and "truncate" not in query.lower() and "create" not in query.lower():
                     st.write(query)
                     df = run_athena_query(query, "default", output_location)
                     st.session_state.messages.append({"role": "assistant", "content": query})
                     st.write(df)
-                    response = get_response_from_doc(llm, faiss_doc_index, original_question)
+                    response = get_response_from_doc(faiss_doc_index, original_question)
                     st.write(response)
-            else:
-                if st.session_state.role == 'admin':
-                    run_athena_query(response, "default", output_location)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-                    st.success("Statement Executed Successfully.")
                 else:
-                    st.write("Sorry, You are not authorized to perform this action.")
+                    if st.session_state.role == 'admin':
+                        run_athena_query(query, "default", output_location)
+                        st.session_state.messages.append({"role": "assistant", "content": query})
+                        st.success("Statement Executed Successfully.")
+                    else:
+                        st.write("Sorry, You are not authorized to perform this action.")
+            else:
+                st.write(query)
 
         # Save conversation history after each interaction
-        save_conversation_history()
+        #save_conversation_history()
 
 if __name__ == "__main__":
     yaml_file_path = '.\config.yaml'
@@ -177,6 +185,7 @@ if __name__ == "__main__":
         faiss_doc_index = refresh_vector_store_local(faiss_doc_paths, pkl_doc_paths, bucket_name, doc_store_path)
         main(faiss_index, faiss_doc_index)
         if st.sidebar.button("Logout"):
+            save_conversation_history()
             st.session_state.logged_in = False
             st.session_state.role = None
             st.experimental_rerun()
